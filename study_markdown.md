@@ -572,3 +572,90 @@ DONE (t=2.88s).
 2.https://blog.csdn.net/qq_37541097/article/details/113247318
 
 3.https://blog.csdn.net/qq_37541097/article/details/112248194
+
+## 评价指标
+
+### 常见指标
+
+- TP(True Positive): IoU>0.5的检测框数量（同一Ground Truth只计算一次）
+- FP(False Positive): IoU<=0.5的检测框（或者是检测到同一个GT的多余检测框的数量）--->**误检**
+- FN(False Negative): 没有检测到的GT的数量--->**漏检**
+- True Negative (TN): 在 mAP 评价指标中**不会使用到**
+
+- Precision: TP / (TP + FP) 模型预测的所有目标中，预测正确的比例（**查准率**）
+- Recall: TP / (TP + FN) 所有真实目标中，模型预测正确的目标比例（**查全率**）
+
+- AP: P-R曲线下面积
+- P-R曲线: Precision-Recall曲线
+
+![image-20221217142225545](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217142225545.png)
+
+- mAP: mean Average Precision, 即各类别AP的平均值
+- 交并比（IOU）
+
+交并比（IOU）是度量两个检测框（对于目标检测来说）的交叠程度，公式如下：
+
+![image-20221217142335059](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217142335059.png)
+
+### AP的计算
+
+以检测下面三张图中猫为例：
+
+![image-20221217140509825](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217140509825.png)
+
+其中绿色框为GT，红色框为预测
+
+- 第一张图
+
+![image-20221217140626112](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217140626112.png)
+
+- 第二张图
+
+![image-20221217140707244](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217140707244.png)
+
+- 第三张图
+
+![image-20221217140740418](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217140740418.png)
+
+一共GT是7只猫，按照置信度从高到低进行排序。
+
+Step1:以0.98作为真阳性的阈值
+
+![image-20221217141101666](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217141101666.png)
+
+Step2:以0.89作为真阳性的阈值
+
+![image-20221217141206506](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217141206506.png)
+
+Step3:以0.88作为真阳性的阈值
+
+![image-20221217141242157](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217141242157.png)
+
+Step4:以0.78作为真阳性的阈值
+
+![image-20221217141313229](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217141313229.png)
+
+Step5:以0.66作为真阳性的阈值
+
+![image-20221217141409489](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217141409489.png)
+
+...
+
+![image-20221217141446981](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217141446981.png)
+
+绘图并求取P-R曲线包围的面积
+
+![image-20221217141541993](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217141541993.png)
+
+### VOC/COCO评价指标
+
+![image-20221217141653947](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217141653947.png)
+
+其中：
+
+- COCO常用AP，COCO评估了在不同的交并比[0.5:0.05:0.95]共10个IoU下的AP，并且在最后以这些阈值下的AP平均作为结果，记为mAP@[.5, .95]；
+- VOC常用AP(IOU=.5)
+
+### 参考
+
+1.https://www.zhihu.com/question/53405779
