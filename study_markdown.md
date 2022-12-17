@@ -659,3 +659,70 @@ Step5:以0.66作为真阳性的阈值
 ### 参考
 
 1.https://www.zhihu.com/question/53405779
+
+## R-CNN
+
+### 简介
+
+- R-CNN(Region with CNN feature)
+- 原论文名称 Rich feature hierarchies for accurate object detection and semantic segmentation;
+- R-CNN可以说是利用深度学习进行目标检测的开山之作。作者Ross Girshick多次在PASCAL VOC的目标检测竞赛中折桂，曾在2010年带领团队获得终身成就奖。
+
+### 算法流程
+
+RCNN算法流程可分为4个步骤
+- 一张图像生成1K~2K个候选区域(使用Selective Search方法)
+- 对每个候选区域，使用深度网络提取特征
+- 特征送入每一类的SVM 分类器，判别是否属于该类
+- 使用回归器精细修正候选框位置
+
+![image-20221217143234953](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217143234953.png)
+
+![image-20221217172723493](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217172723493.png)
+
+#### 候选区域的生成
+
+利用**Selective Search**算法通过图像分割的方法得到一些原始区域，然后使用一些合并策略将这些区域合并，得到一个层次化的区域结构，而这些结构就包含着可能需要的物体
+
+![image-20221217143328377](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217143328377.png)
+
+#### 提取特征
+
+将2000候选区域缩放到227x227pixel，接着将候选区域输入事先训练好的AlexNet CNN网络获取4096维的特征得到2000×4096维矩阵。
+
+![image-20221217143402137](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217143402137.png)
+
+#### SVM分类器
+
+将2000×4096的特征矩阵与20个SVM组成的权值矩阵4096×20
+相乘，获得2000×20的概率矩阵，每一行代表一个建议框归于每个
+目标类别的概率。分别对上述2000×20维矩阵中每一列即每一类进
+行**非极大值抑制**剔除重叠建议框，得到该列即该类中得分最高的一
+些建议框。
+
+![image-20221217143531457](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217143531457.png)
+
+NMS（非极大值抑制）
+
+- 寻找得分最高的目标
+- 计算其他目标与该目标的iou值
+- 删除所有iou值大于给定阈值的目标
+
+![image-20221217170834600](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217170834600.png)
+
+#### 回归器修正位置
+
+对NMS处理后剩余的建议框进一步筛选。接着分别用20个回归器对上述20个类别中剩余的建议框进行回归操作，最终得到每个类别的修正后的得分最高的bounding box。
+如图，黄色框口P表示建议框Region Proposal，绿色窗口G表示实际框Ground Truth，红色窗口 Ĝ表示Region Proposal进行回归后的预测窗口，可以用最小二乘法解决的线性回归问题。
+
+<img src="/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217172636902.png" alt="image-20221217172636902" style="zoom:50%;" />
+
+### 不足
+
+R-CNN存在的问题：
+1.测试速度慢：
+测试一张图片约53s(CPU)。用Selective Search算法提取候选框用时约2秒，一张图像内候选框之间存在大量重叠，提取特征操作冗余。
+2.训练速度慢：
+过程及其繁琐。
+3.训练所需空间大：
+对于SVM和bbox回归训练，需要从每个图像中的每个目标候选框提取特征，并写入磁盘。对于非常深的网络，如VGG16，从VOC07训练集上的5k图像上提取的特征需要数百GB的存储空间。
