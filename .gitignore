@@ -1,0 +1,8 @@
+*.tar
+**/data/classifier_car
+**/data/finetune_car
+**/data/voc_car
+**/data/VOCdevkit
+**/data/bbox_regression
+*.pth
+.vscode/

@@ -686,13 +686,219 @@ RCNN算法流程可分为4个步骤
 
 ![image-20221217143328377](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217143328377.png)
 
+```python
+import sys
+import cv2
+
+
+def get_selective_search():
+    gs = cv2.ximgproc.segmentation.createSelectiveSearchSegmentation()
+    return gs
+
+
+def config(gs, img, strategy='q'):
+    gs.setBaseImage(img)
+
+    if (strategy == 's'):
+        gs.switchToSingleStrategy()
+    elif (strategy == 'f'):
+        gs.switchToSelectiveSearchFast()
+    elif (strategy == 'q'):
+        gs.switchToSelectiveSearchQuality()
+    else:
+        print(__doc__)
+        sys.exit(1)
+
+
+def get_rects(gs):
+    rects = gs.process()
+    rects[:, 2] += rects[:, 0]
+    rects[:, 3] += rects[:, 1]
+
+    return rects
+
+
+if __name__ == '__main__':
+    """
+    选择性搜索算法操作
+    """
+    gs = get_selective_search()
+
+    img = cv2.imread('./data/lena.jpg', cv2.IMREAD_COLOR)
+    config(gs, img, strategy='q')
+
+    rects = get_rects(gs)
+    print(rects)
+
+```
+
+**注意：**
+
+这个方法的缺点是使用**CPU进行计算生成候选框**，这就大大拖慢了我们预测时候的速度。**预处理也很慢**。
+
 #### 提取特征
 
-将2000候选区域缩放到227x227pixel，接着将候选区域输入事先训练好的AlexNet CNN网络获取4096维的特征得到2000×4096维矩阵。
+将2000候选区域缩放到227x227pixel，接着将候选区域输入事先训练好的AlexNet CNN网络获取4096维的特征得到2000×4096维矩阵。获得了确定一张**图像中是否有某个目标的模型**。
 
 ![image-20221217143402137](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217143402137.png)
 
+```Python
+import os
+import copy
+import time
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader
+import torchvision.transforms as transforms
+import torchvision.models as models
+
+from utils.data.custom_finetune_dataset import CustomFinetuneDataset
+from utils.data.custom_batch_sampler import CustomBatchSampler
+from utils.util import check_dir
+from visdom import Visdom
+
+# 将打好标签的目标截取出来，并赋予正样本负样本的标签，然后进行CNN特征提取
+def load_data(data_root_dir):
+    transform = transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.Resize((227, 227)),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ])
+
+    data_loaders = {}
+    data_sizes = {}
+    for name in ['train', 'val']:
+        data_dir = os.path.join(data_root_dir, name)
+        data_set = CustomFinetuneDataset(data_dir, transform=transform)
+        data_sampler = CustomBatchSampler(data_set.get_positive_num(), data_set.get_negative_num(), 32, 96)
+        data_loader = DataLoader(data_set, batch_size=128, sampler=data_sampler, num_workers=8, drop_last=True)
+
+        data_loaders[name] = data_loader
+        data_sizes[name] = data_sampler.__len__()
+
+    return data_loaders, data_sizes
+
+
+def train_model(data_loaders, model, criterion, optimizer, lr_scheduler, num_epochs=25, device=None):
+    since = time.time()
+
+    best_model_weights = copy.deepcopy(model.state_dict())
+    best_acc = 0.0
+
+    for epoch in range(num_epochs):
+        # start time
+        epoch_start_time = time.time()
+        print('Epoch {}/{}'.format(epoch, num_epochs - 1))
+        print('-' * 10)
+
+        # Each epoch has a training and validation phase
+        for phase in ['train', 'val']:
+            if phase == 'train':
+                model.train()  # Set model to training mode
+            else:
+                model.eval()  # Set model to evaluate mode
+
+            running_loss = 0.0
+            running_corrects = 0
+
+            # Iterate over data.
+            for inputs, labels in data_loaders[phase]:
+                inputs = inputs.to(device)
+                labels = labels.to(device)
+
+                # zero the parameter gradients
+                optimizer.zero_grad()
+
+                # forward
+                # track history if only in train
+                with torch.set_grad_enabled(phase == 'train'):
+                    outputs = model(inputs)
+                    _, preds = torch.max(outputs, 1)
+                    loss = criterion(outputs, labels)
+
+                    # backward + optimize only if in training phase
+                    if phase == 'train':
+                        loss.backward()
+                        optimizer.step()
+
+                # statistics
+                running_loss += loss.item() * inputs.size(0)
+                running_corrects += torch.sum(preds == labels.data)
+            if phase == 'train':
+                lr_scheduler.step()
+
+            epoch_loss = running_loss / data_sizes[phase]
+            epoch_acc = running_corrects.double() / data_sizes[phase]
+
+            print('{} Loss: {:.4f} Acc: {:.4f}'.format(
+                phase, epoch_loss, epoch_acc))
+
+            # deep copy the model
+            if phase == 'val' and epoch_acc > best_acc:
+                best_acc = epoch_acc
+                best_model_weights = copy.deepcopy(model.state_dict())
+        epoch_end_time = time.time() - epoch_start_time
+        print('Training epoch complete in {:.0f}m {:.0f}s'.format(
+            epoch_end_time // 60, epoch_end_time % 60))
+
+    time_elapsed = time.time() - since
+    print('Training complete in {:.0f}m {:.0f}s'.format(
+        time_elapsed // 60, time_elapsed % 60))
+    print('Best val Acc: {:4f}'.format(best_acc))
+
+    # load best model weights
+    model.load_state_dict(best_model_weights)
+    return model
+
+
+if __name__ == '__main__':
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    data_loaders, data_sizes = load_data('../../data/classifier_car')
+
+    model = models.alexnet(pretrained=True)
+    # print(model)
+    num_features = model.classifier[6].in_features
+    # 把alexnet变成二分类
+    model.classifier[6] = nn.Linear(num_features, 2)
+    print(model)
+    model = model.to(device)
+
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.SGD(model.parameters(), lr=1e-3, momentum=0.9)
+    lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
+
+    best_model = train_model(data_loaders, model, criterion, optimizer, lr_scheduler, device=device, num_epochs=10)
+    # 保存最好的模型参数
+    check_dir('../../models')
+    torch.save(best_model.state_dict(), '../../models/alexnet_car.pth')
+
+```
+
 #### SVM分类器
+
+- [x] 训练阶段
+
+使用`Hard Negative Mining`（**负样本挖掘**）方法进行分类器的训练
+
+1. 在AlexNet模型的基础上，进行 SVM二分类器的模型训练；
+2. 先取得和正例相同的负例作为训练样本；
+3. 进行第一轮训练并计算出准确率和loss，根据验证集准确率表现，同时判断是否可以存储为最好的模型参数；
+4. 难分辨负样本挖掘。（RCNN特有的） ；
+5. 将挖掘好的难分辨负样本数据加到负样本总数据中，进行下一轮训练；
+6. 经过多轮训练，存储一个最好的二分类器。
+
+#### 回归器修正位置
+
+- [x] 训练阶段
+
+1. 图像的框体的调整，使用岭回归方式。
+2. 在读取alexnet的网络的基础上，冻结住alexnet的网络，并且取得alexnet中feature层的输出，送入一个线性的计算的模型，计算出4个输出。用于衡量偏移情况。
+
+- [x] 推理阶段
 
 将2000×4096的特征矩阵与20个SVM组成的权值矩阵4096×20
 相乘，获得2000×20的概率矩阵，每一行代表一个建议框归于每个
@@ -704,18 +910,29 @@ RCNN算法流程可分为4个步骤
 
 NMS（非极大值抑制）
 
-- 寻找得分最高的目标
-- 计算其他目标与该目标的iou值
-- 删除所有iou值大于给定阈值的目标
+1. 首先对产生的矩形区域按得分进行降序排序，筛选出得分最好的矩形
+2. 然后将与得分最高的区域 IoU 高于某一阈值的矩形删除
+3. 重复上面步骤，知道没有矩形可选为止，最终得到想要的矩形区域
 
-![image-20221217170834600](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217170834600.png)
+以下以人脸检测为例，如下图：
 
-#### 回归器修正位置
+<img src="/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221219213424926.png" alt="image-20221219213424926" style="zoom:50%;" />
 
-对NMS处理后剩余的建议框进一步筛选。接着分别用20个回归器对上述20个类别中剩余的建议框进行回归操作，最终得到每个类别的修正后的得分最高的bounding box。
-如图，黄色框口P表示建议框Region Proposal，绿色窗口G表示实际框Ground Truth，红色窗口 Ĝ表示Region Proposal进行回归后的预测窗口，可以用最小二乘法解决的线性回归问题。
+在测试阶段SVM 产生的结果，图中有两个人，产生了 A~E 六个矩形区域和分值。那么按照 NMS 的算法首先对矩形区域按照分值进行排序，排序结果如下：
 
-<img src="/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217172636902.png" alt="image-20221217172636902" style="zoom:50%;" />
+A[0.98]  >  D[0.86]  >  B[0.77]  >  E[0.69]  >  C[0.56]  >  F[0.48]
+
+从中出分值最大的，那么 A 就被算中，接下来就删除与 A 矩形的 IoU 大于某个阈值的矩形。从图中可以观察到 B、C 将被删除，A 被保留，如下图：
+
+![image-20221219213509652](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221219213509652.png)
+
+接下来继续 NMS 操作，从剩下来的 D、E、F 中选择分值最高的，那么 D 将被选中，与 D 的 IoU 大于阈值的矩形将被删除，E、F 被删除留下 D，如下图：
+
+![image-20221219213520729](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221219213520729.png)
+
+从上图中可以看出已经得到了我们想要的结果，如果还有矩形框，那么就按照上面的步骤不断重复，直到没有可供选择的矩形框位置。
+
+接着分别用20个回归器对上述20个类别中剩余的建议框进行回归操作，最终得到每个类别的修正后的得分最高的bounding box。
 
 ### 不足
 
@@ -726,3 +943,17 @@ R-CNN存在的问题：
 过程及其繁琐。
 3.训练所需空间大：
 对于SVM和bbox回归训练，需要从每个图像中的每个目标候选框提取特征，并写入磁盘。对于非常深的网络，如VGG16，从VOC07训练集上的5k图像上提取的特征需要数百GB的存储空间。
+
+### 参考
+
+1.https://github.com/object-detection-algorithm/R-CNN
+
+2.R-CNN https://zhuanlan.zhihu.com/p/420316779
+
+3.R-CNN https://zhuanlan.zhihu.com/p/42643788
+
+4.Pytorchviz https://github.com/szagoruyko/pytorchviz
+
+5.Visdom使用 https://blog.csdn.net/weixin_41010198/article/details/117853358
+
+6.岭回归 https://blog.csdn.net/weixin_44225602/article/details/112912067
