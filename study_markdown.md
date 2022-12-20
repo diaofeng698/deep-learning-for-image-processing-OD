@@ -676,15 +676,17 @@ RCNN算法流程可分为4个步骤
 - 特征送入每一类的SVM 分类器，判别是否属于该类
 - 使用回归器精细修正候选框位置
 
-![image-20221217143234953](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217143234953.png)
+![image-20221220141912391](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221220141912391.png)
 
 ![image-20221217172723493](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217172723493.png)
+
+![image-20221220142129422](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221220142129422.png)
 
 #### 候选区域的生成
 
 利用**Selective Search**算法通过图像分割的方法得到一些原始区域，然后使用一些合并策略将这些区域合并，得到一个层次化的区域结构，而这些结构就包含着可能需要的物体
 
-![image-20221217143328377](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221217143328377.png)
+![image-20221220142018875](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221220142018875.png)
 
 ```python
 import sys
@@ -880,8 +882,6 @@ if __name__ == '__main__':
 
 #### SVM分类器
 
-- [x] 训练阶段
-
 使用`Hard Negative Mining`（**负样本挖掘**）方法进行分类器的训练
 
 1. 在AlexNet模型的基础上，进行 SVM二分类器的模型训练；
@@ -891,14 +891,22 @@ if __name__ == '__main__':
 5. 将挖掘好的难分辨负样本数据加到负样本总数据中，进行下一轮训练；
 6. 经过多轮训练，存储一个最好的二分类器。
 
+**特征提取与SVM分类阶段正反例的选取**：
+
+![image-20221220143003316](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221220143003316.png)
+
 #### 回归器修正位置
 
 - [x] 训练阶段
+
+![image-20221220142838744](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221220142838744.png)
 
 1. 图像的框体的调整，使用岭回归方式。
 2. 在读取alexnet的网络的基础上，冻结住alexnet的网络，并且取得alexnet中feature层的输出，送入一个线性的计算的模型，计算出4个输出。用于衡量偏移情况。
 
 - [x] 推理阶段
+
+![image-20221220142822375](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221220142822375.png)
 
 将2000×4096的特征矩阵与20个SVM组成的权值矩阵4096×20
 相乘，获得2000×20的概率矩阵，每一行代表一个建议框归于每个
@@ -934,15 +942,23 @@ A[0.98]  >  D[0.86]  >  B[0.77]  >  E[0.69]  >  C[0.56]  >  F[0.48]
 
 接着分别用20个回归器对上述20个类别中剩余的建议框进行回归操作，最终得到每个类别的修正后的得分最高的bounding box。
 
-### 不足
+### 不足与改进
 
 R-CNN存在的问题：
 1.测试速度慢：
 测试一张图片约53s(CPU)。用Selective Search算法提取候选框用时约2秒，一张图像内候选框之间存在大量重叠，提取特征操作冗余。
+
+![image-20221220142515697](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221220142515697.png)
+
 2.训练速度慢：
 过程及其繁琐。
+
 3.训练所需空间大：
 对于SVM和bbox回归训练，需要从每个图像中的每个目标候选框提取特征，并写入磁盘。对于非常深的网络，如VGG16，从VOC07训练集上的5k图像上提取的特征需要数百GB的存储空间。
+
+**可改进的方向**：
+
+![image-20221220143248544](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221220143248544.png)
 
 ### 参考
 
@@ -952,8 +968,25 @@ R-CNN存在的问题：
 
 3.R-CNN https://zhuanlan.zhihu.com/p/42643788
 
-4.Pytorchviz https://github.com/szagoruyko/pytorchviz
+4.R-CNNhttps://blog.csdn.net/weixin_43694096/article/details/123827942
 
-5.Visdom使用 https://blog.csdn.net/weixin_41010198/article/details/117853358
+5.Pytorchviz https://github.com/szagoruyko/pytorchviz
 
-6.岭回归 https://blog.csdn.net/weixin_44225602/article/details/112912067
+6.Visdom使用 https://blog.csdn.net/weixin_41010198/article/details/117853358
+
+7.岭回归 https://blog.csdn.net/weixin_44225602/article/details/112912067
+
+## Fast R-CNN
+
+### 简介
+
+Fast R-CNN是作者Ross Girshick继R-CNN后的又一力作。同样使用VGG16作为网络的backbone，与R-CNN相比训练时间快9倍，测试推理时间快213倍，准确率从62%提升至66%(在Pascal VOC数据集上)。
+
+### 算法流程
+
+Fast R-CNN算法流程可分为3个步骤
+- 一张图像生成1K~2K个候选区域(使用Selective Search方法)
+- 将图像输入网络得到相应的特征图，将SS算法生成的候选框投影到特征图上获得相应的特征矩阵
+- 将每个特征矩阵通过ROI pooling层缩放到7x7大小的特征图，接着将特征图展平通过一系列全连接层得到预测结果
+
+![image-20221219214924837](/data/fdiao/learning/deep-learning-for-image-processing-OD/img/image-20221219214924837.png)
